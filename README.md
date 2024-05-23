@@ -6,6 +6,8 @@ This project contains an analysis of eye-movement data recorded during virtual r
 
 - `GazeData_TimeSeries_Analysis.Rmd`: The R Markdown file containing the code and analysis.
 - `GazeData_TimeSeries_Analysis.pdf`: The PDF report generated from the R Markdown file.
+- `BeatSaber_11-12-2020_GazeDataAll.txt`: The text file containing BeatSaber Gaze Data.
+- `PistolWhip_11-12-2020_GazeDataAll.txt`: The text file containing PistolWhip Gaze Data. 
 
 ## Description
 
