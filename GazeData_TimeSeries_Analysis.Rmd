@@ -1,0 +1,261 @@
+---
+title: "Data Analysis Project 2"
+author: "Andy Kapoor"
+date: " April 2024"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(binom)
+library(dplyr)
+library(FSA)
+library(car)
+library(rcompanion)
+library(multcomp)
+library(data.table)
+library(ggplot2)
+library(tseries)
+library(forecast)
+```
+
+## Project Question: "Do temporal patterns exist in the gaze fluctuations of a participant while playing different VR games, and do these patterns vary across games?"
+
+## Hypotheses
+Null Hypothesis (H0): There are no temporal autocorrelation patterns in gaze fluctuations across different VR games, indicating that gaze movements are random over time within each game.
+
+Alternative Hypothesis (H1): Temporal autocorrelation patterns exist in gaze fluctuations across different VR games, suggesting that gaze movements are not random and may follow specific trends or cycles.
+
+# BeatSaber Data
+### Graphs
+```{r}
+participant1_path <- "/cloud/project/Participant 1"
+beat_saber_data <- fread(file.path(participant1_path, "BeatSaber_11-12-2020_GazeDataAll.txt"), header = TRUE, sep = ",", strip.white = TRUE)
+beat_saber_data$Time <- as.numeric(beat_saber_data$Time)
+beat_saber_data$Time <- as.POSIXct(beat_saber_data$Time / 1e6, tz = "UTC")
+
+  # Plot the X axis gaze data
+ggplot(beat_saber_data, aes(x = Time, y = `L Pixel X`)) + 
+  geom_line() +
+  theme_minimal() +
+  labs(title = "Left Eye Gaze X Coordinate Over Time - Beat Saber", x = "Time", y = "X Coordinate")
+  
+  # Plot the y axis gaze data
+ggplot(beat_saber_data, aes(x = Time, y = `L Pixel Y`)) + 
+  geom_line() +
+  theme_minimal() +
+  labs(title = "Left Eye Gaze Y Coordinate Over Time - Beat Saber", x = "Time", y = "Y Coordinate")
+```
+
+```{r}
+  # Autocorrelation Function (ACF) to indicate whether Autoregression model is applicable
+acf(beat_saber_data$`L Pixel X`, main = "ACF for L Pixel X")
+acf(beat_saber_data$`L Pixel Y`, main = "ACF for L Pixel Y")
+```
+ACF values close to one indicate strong correlation. The gradual decline in the ACF plot suggests a decreasing correlation between the data point and its past values at longer lags.
+
+Gradual decline of ACF graphs to 0 suggests there is correlation in time series values and their preceeding or succeeding values. Past values have significant influence on future values, suggesting AR model is appropriate.
+
+Confidence Interval (Dotted Blue Line): This represents the range of values within which we would expect the ACF values to fall if the series were purely random (white noise). Typically, this is set at the 95% confidence level, meaning we would expect 95% of the values to fall within this range if there were no true autocorrelations in the data. When ACF values extend beyond the confidence interval, it suggests that the observed correlation at that lag is statistically significant and is unlikely to be due to random chance.
+
+### ADF and KPSS Stationarity Tests
+```{r}
+  # ADF and KPSS test for BeatSaber X axis data
+BS_adf_test_result_x <- adf.test(beat_saber_data$`L Pixel X`, alternative = "stationary")
+print(BS_adf_test_result_x)
+
+BS_kpss_test_result_x <- kpss.test(beat_saber_data$`L Pixel X`, null = "Trend")
+print(BS_kpss_test_result_x)
+
+
+print("----------------------------------------------------------------------------------------")
+
+  # ADF and KPSS test for BeatSaber Y axis data
+BS_adf_test_result_y <- adf.test(beat_saber_data$`L Pixel Y`, alternative = "stationary")
+print(BS_adf_test_result_y)
+
+BS_kpss_test_result_y <- kpss.test(beat_saber_data$`L Pixel Y`, null = "Trend")
+print(BS_kpss_test_result_y)
+
+
+print("DIFFERENCED DATA BELOW-------------------------------------------------------------------")
+  # KPSS results for L Pixel Y are below 0.05, suggesting there are trends we must account for before fitting the ARIMA time series model. Otherwise, we introduce biases and inacuracies in our estimates. To deal with this, we difference the data (transform the series into the difference between two consecutive observations). Then we retest for stationarity. 
+  
+  # Differencing the data
+beat_saber_data$`L Pixel Y_diff` <- c(NA, diff(beat_saber_data$`L Pixel Y`))
+
+  # ADF and KPSS test for Differenced BeatSaber Y axis data
+BS_adf_test_result_y_diff <- adf.test(na.omit(beat_saber_data$`L Pixel Y_diff`), alternative = "stationary")
+print(BS_adf_test_result_y_diff)
+
+BS_kpss_test_result_y_diff <- kpss.test(na.omit(beat_saber_data$`L Pixel Y_diff`), null = "Trend")
+print(BS_kpss_test_result_y_diff)
+```
+X axis data staionary, suitable for AR model.
+Y axis differenced data stationary, suitable for AR model.
+
+### Fit Autoregressive Models
+```{r}
+  # Fit Autoregressive model for X axis data. The model I'm fitting looks at how past values of the series influence the current value, without considering trends over time or smoothing mechanisms. It is a purely autoregressive model in the ARIMA framework. 
+BS_initial_model_x <- auto.arima(beat_saber_data$`L Pixel X`, max.p=10, max.d=0, max.q=0, seasonal=FALSE)
+summary(BS_initial_model_x)
+
+print("----------------------------------------------------------------------------------------")
+
+  # Fit Autoregressive model for Differenced Y axis data
+BS_initial_model_y <- auto.arima(beat_saber_data$`L Pixel Y_diff`, max.p=10, max.d=0, max.q=0, seasonal=FALSE)
+summary(BS_initial_model_y)
+```
+
+### Check Residuals
+```{r}
+  # Function graphs ACF plot of residuals to check if there is any autocorrelation left in residuals. Ideal fit model will resemble white noise (random distribution around 0). It also performs an Ljung-Box test to test the null hypothesis that the residuals are independently distributed. p < 0.05 indicates autocorrelation in residuals. 
+checkresiduals(BS_initial_model_x)
+
+print("----------------------------------------------------------------------------------------")
+
+checkresiduals(BS_initial_model_y)
+```
+Ljung-Box results:
+X axis data: p < 0.05, indicating there is autocorrelation in the residuals, and a pattern that has not been accounted for by the AR model. 
+Y axis data: p > 0.05, indicating the AR model fully captured the underlying structure of the data. The AR model is appropriate for this data. 
+
+
+### Full Prediction Alignment Graph
+```{r}
+  # Since beastsaber y data failed KPSS assumption test, it had to be differenced. The plot below overlays fitted differenced data with the actual to see how well the predictions align. 
+plot_data <- data.frame(
+  Time = beat_saber_data$Time[-1],  
+  Differenced_Y = beat_saber_data$`L Pixel Y_diff`[-1],  
+  Fitted_Y = fitted(BS_initial_model_y))
+
+  # Plot the differenced data and the fitted predictions
+ggplot(plot_data, aes(x = Time)) +
+  geom_line(aes(y = Differenced_Y), colour = "blue") +
+  geom_line(aes(y = Fitted_Y), colour = "red") +
+  labs(title = "Overlay of Differenced and Fitted Model Predictions - Beat Saber Y-axis",
+       x = "Time", y = "Differenced Gaze Position Y") +
+  theme_minimal()
+```
+
+### Sectioned Prediction Alignment Graph
+```{r}
+num_obs <- nrow(beat_saber_data)
+quarter_point <- round(num_obs * 0.01)
+
+  # Subset the data to include only the first 1% of the full plot. This lets us 'zoom' into the graph and see how the fitted values predict the shape of the actual data. 
+plot_data <- data.frame(
+  Time = beat_saber_data$Time[2:quarter_point],  # Starting from 2 to avoid NA in the first element
+  Differenced_Y = beat_saber_data$`L Pixel Y_diff`[2:quarter_point],
+  Fitted_Y = fitted(BS_initial_model_y)[1:(quarter_point-1)])  # Adjusting for the range since fitted values start from the second observation
+
+  # Plot the first 1% of the differenced data and the fitted predictions
+ggplot(plot_data, aes(x = Time)) +
+  geom_line(aes(y = Differenced_Y), colour = "blue") +
+  geom_line(aes(y = Fitted_Y), colour = "red", linetype = "dashed") +
+  labs(title = "Overlay of 1% of Differenced and Fitted Model Predictions - Beat Saber Y-axis",
+       x = "Time", y = "Differenced Gaze Position Y") +
+  theme_minimal()
+```
+
+
+
+# PistolWhip Data
+### Graphs
+```{r}
+participant1_path <- "/cloud/project/Participant 1"
+pistolwhip_data <- fread(file.path(participant1_path, "PistolWhip_11-12-2020_GazeDataAll.txt"), 
+                         header = TRUE, 
+                         sep = ",", 
+                         strip.white = TRUE, 
+                         fill = TRUE)
+
+pistolwhip_data[] <- lapply(pistolwhip_data, function(x) if (class(x) == "integer64") as.numeric(x) else x)
+pistolwhip_data$Time <- as.numeric(pistolwhip_data$Time)
+pistolwhip_data$Time <- as.POSIXct(pistolwhip_data$Time / 1e6, tz = "UTC")
+
+
+ggplot(pistolwhip_data, aes(x = Time, y = `L Pixel X`)) + 
+  geom_line() +
+  theme_minimal() +
+  labs(title = "Left Eye Gaze X Coordinate Over Time - Pistol Whip", x = "Time", y = "X Coordinate")
+
+ggplot(pistolwhip_data, aes(x = Time, y = `L Pixel Y`)) + 
+  geom_line() +
+  theme_minimal() +
+  labs(title = "Left Eye Gaze Y Coordinate Over Time - Pistol Whip", x = "Time", y = "Y Coordinate")
+```
+
+```{r}
+  # Autocorrelation Function (ACF) to indicate whether Autoregression model is applicable
+  # ACF for X axis
+acf(pistolwhip_data$`L Pixel X`, main = "ACF for L Pixel X - Pistol Whip")
+  # ACF for Y axis
+acf(pistolwhip_data$`L Pixel Y`, main = "ACF for L Pixel Y - Pistol Whip")
+```
+Gradual decline of ACF graphs to 0 suggests there is correlation in time series values and their preceeding or succeeding values. Past values have significant influence on future values, suggesting AR model is appropriate.
+
+### ADF and KPSS Stationarity 
+```{r}
+# ADF and KPSS tests for PistolWhip X axis data
+PW_adf_test_result_x <- adf.test(pistolwhip_data$`L Pixel X`, alternative = "stationary")
+print(PW_adf_test_result_x)
+
+PW_kpss_test_result_x <- kpss.test(pistolwhip_data$`L Pixel X`, null = "Trend")
+print(PW_kpss_test_result_x)
+
+print("----------------------------------------------------------------------------------------")
+
+# ADF and KPSS tests for PistolWhip Y axis Data
+PW_adf_test_result_y <- adf.test(pistolwhip_data$`L Pixel Y`, alternative = "stationary")
+print(PW_adf_test_result_y)
+
+PW_kpss_test_result_y <- kpss.test(pistolwhip_data$`L Pixel Y`, null = "Trend")
+print(PW_kpss_test_result_y)
+
+
+print("DIFFERENCED DATA BELOW-------------------------------------------------------------------")
+  #KPSS result for L Pixel Y is below 0.05, suggesting there are trends we must account for before fitting the ARIMA time series model. Otherwise, we introduced biases and inaccuracies in our estimates. To deal with this, we difference the data (transform the series into the difference between two consecutive observations). Then we retest for stationarity. 
+
+  # Differencing the data
+pistolwhip_data$`L Pixel Y_diff` <- c(NA, diff(pistolwhip_data$`L Pixel Y`))
+
+  # ADF and KPSS tests for Differenced PistolWhip Y axis data
+PW_adf_test_result_y_diff <- adf.test(na.omit(pistolwhip_data$`L Pixel Y_diff`), alternative = "stationary")
+print(PW_adf_test_result_y_diff)
+
+PW_kpss_test_result_y_diff <- kpss.test(na.omit(pistolwhip_data$`L Pixel Y_diff`), null = "Trend")
+print(PW_kpss_test_result_y_diff)
+```
+X axis data staionary, suitable for AR model.
+Y axis differenced data stationary, suitable for AR model.
+
+### Fit Autoregressive Models
+```{r}
+  # Fit Autoregressive model for X axis data. The model I'm fitting looks at how past values of the series influence the current value, without considering trends over time or smoothing mechanisms. It is a purely autoregressive model in the ARIMA framework.
+PW_initial_model_x <- auto.arima(pistolwhip_data$`L Pixel X`, max.p=10, max.d=0, max.q=0, seasonal=FALSE)
+summary(PW_initial_model_x)
+
+print("----------------------------------------------------------------------------------------")
+
+  # Fit AR model for Differenced Y axis data
+PW_initial_model_y <- auto.arima(pistolwhip_data$`L Pixel Y_diff`, max.p=10, max.d=0, max.q=0, seasonal=FALSE)
+summary(PW_initial_model_y)
+```
+
+
+
+
+### Check Residuals
+```{r}
+  # Function graphs ACF plot of residuals to check if there is any autocorrelation left in residuals. Ideal fit model will resemble white noise (random distribution around 0). It also performs an Ljung-Box test to test the null hypothesis that the residuals are independently distributed. p < 0.05 indicates autocorrelation in residuals. 
+checkresiduals(PW_initial_model_x)
+
+print("----------------------------------------------------------------------------------------")
+
+checkresiduals(PW_initial_model_y)
+```
+Ljung-Box results:
+X axis data: p < 0.05, indicating there is autocorrelation in the residuals, and a pattern that has not been accounted for by the AR model.
+Y axis data: p < 0.05, indicating there is autocorrelation in the residuals, and a pattern that has not been accounted for by the AR model.
