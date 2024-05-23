@@ -6,7 +6,6 @@ This project contains an analysis of eye-movement data recorded during virtual r
 
 - `GazeData_TimeSeries_Analysis.Rmd`: The R Markdown file containing the code and analysis.
 - `GazeData_TimeSeries_Analysis.pdf`: The PDF report generated from the R Markdown file.
-- `Sample_Results.docx`: A document containing sample results from the analysis.
 
 ## Description
 
